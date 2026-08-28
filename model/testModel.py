@@ -33,17 +33,14 @@ classes = sorted([
     if os.path.isdir(os.path.join(dataset_path, d))
 ])
 
+print(classes)
+
 # ----------------------------
 # LOAD TEST IMAGE
 # ----------------------------
 image_path = "model/testBirds/starling.jpg"   # change this to your image
-
 image = Image.open(image_path).convert("RGB")
-
-# preprocess image
 image = transform(image)
-
-# add batch dimension
 image = image.unsqueeze(0)
 
 # ----------------------------

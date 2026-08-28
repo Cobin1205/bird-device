@@ -1,3 +1,5 @@
 .venv
 .env
 CUB_200_2011
+*.jpg
+.vscode
