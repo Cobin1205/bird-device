@@ -1,176 +1,287 @@
 import io
+import json
 import time
+from datetime import datetime
 
 import cv2
-import keyboard
-import requests
-import torch
-from PIL import Image, ImageDraw
-from torchvision import transforms
-from ultralytics import YOLO
 import numpy as np
+import requests
+from PIL import Image, ImageDraw
 
-verbose = True
+# =====================================================
+# CONFIG
+# =====================================================
 
-def vprint(input):
-    if verbose:
-        print(input)
+VERBOSE = True
+
+DETECTOR_PATH = "yolo11n.onnx"       # exported YOLO11n (imgsz must match DETECT_SIZE)
+CLASSIFIER_PATH = "bird_model.onnx"  # your species model
+
+DETECT_SIZE = 320         # must match the imgsz used when exporting YOLO to ONNX
+BIRD_CLASS_ID = 14        # COCO "bird"
+DETECT_CONF = 0.40        # min confidence for a bird detection
+NMS_IOU = 0.45            # overlap threshold for removing duplicate boxes
+LOOP_DELAY = 0.5          # seconds between frames
+
+WEBHOOK_URL = "https://webhook.site/a32c1a03-0dd5-4ef2-a876-baae164519dd"
+
+CLASSES = [
+    'American_Crow', 'American_Goldfinch', 'American_Robin', 'Baltimore_Oriole', 'Barn_Swallow',
+    'Black_Capped_Chickadee', 'Blue_Grosbeak', 'Blue_Jay', 'Bobolink', 'Brewer_Blackbird',
+    'Brown_Creeper', 'Brown_Thrasher', 'Brownheaded_Cowbird', 'Cardinal', 'Carolina_Wren',
+    'Cedar_Waxwing', 'Chipping_Sparrow', 'Common_Grackle', 'Common_Raven', 'Common_Yellowthroat',
+    'Dark_eyed_Junco', 'Downy_Woodpecker', 'Eastern_Bluebird', 'Eastern_Towhee', 'European_Starling',
+    'Field_Sparrow', 'Fox_Sparrow', 'Gray_Catbird', 'Hairy_Woodpecker', 'House_Finch',
+    'House_Sparrow', 'House_Wren', 'Indigo_Bunting', 'Lincoln_Sparrow', 'Magnolia_Warbler',
+    'Mockingbird', 'Mourning_Dove', 'Northern_Flicker', 'Orchard_Oriole', 'Pileated_Woodpecker',
+    'Pine_Warbler', 'Purple_Finch', 'Red_bellied_Woodpecker', 'Red_headed_Woodpecker',
+    'Red_winged_Blackbird', 'Rose_breasted_Grosbeak', 'Ruby_throated_Hummingbird', 'Rusty_Blackbird',
+    'Savannah_Sparrow', 'Scarlet_Tanager', 'Song_Sparrow', 'Spotted_Catbird', 'Tree_Sparrow',
+    'Tree_Swallow', 'Tufted_Titmouse', 'White_breasted_Nuthatch', 'White_crowned_Sparrow',
+    'White_throated_Sparrow', 'Yellow_Warbler', 'Yellow_headed_Blackbird',
+]
+
+IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+
+
+def vprint(msg):
+    if VERBOSE:
+        print(msg)
+
+
+# =====================================================
+# MODEL LOADING (OpenCV DNN, no onnxruntime needed)
+# =====================================================
+
+def load_net(path):
+    net = cv2.dnn.readNetFromONNX(path)
+    net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+    net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+    return net
+
+
+# =====================================================
+# CAMERA
+# =====================================================
 
 def capture_image(cam):
-    try:
-        ret, frame = cam.read()
-        if not ret:
-            raise RuntimeError()
-        pillow_frame = Image.fromarray(frame)
-        pillow_frame.convert('RGB')
-        pillow_frame.save('rpi/image.jpg')
-        return pillow_frame
-    except Exception as e:
-        print('Failed to capture image')
+    """Grab a frame and return it as an RGB PIL image (or None on failure)."""
+    ret, frame = cam.read()
+    if not ret or frame is None:
+        print("Failed to capture image")
         return None
-        
+    # OpenCV gives BGR; PIL expects RGB
+    return Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
-# Input: file path to image containing birds
-# Output: list of cropped bird images
-def get_birds(image_path: str, transform):
-    model = YOLO("yolo11n.pt")
-    results = model(image_path, verbose=False)[0]
-    BIRD_CLASS_ID = 14 #bird
-    bird_boxes = []
-    for box in results.boxes:
-        cls_id = int(box.cls[0])
-        if cls_id == BIRD_CLASS_ID:
-            coords = box.xyxy[0].tolist()
-            bird_boxes.append(coords)
-    vprint(f'Num of Birds: {len(bird_boxes)}')
-    if not bird_boxes:
-        vprint("No birds detected in the image.")
-        return [], []
-    with Image.open(image_path) as img:
-        birds = []
-        for box in bird_boxes:
-            vprint(f'bird boxes: {box}')
-            final_img = img.crop((box[0], box[1], box[2], box[3]))
-            final_img = final_img.convert("RGB")
-            final_img = transform(final_img)
-            final_img = final_img.unsqueeze(0)
-            birds.append(final_img)
-    return birds, bird_boxes
 
-def predict(model, tensors, classes):
-    with torch.no_grad():
-        ret = []
-        for tensor in tensors:
-            output = model(tensor)
-            predicted_index = torch.argmax(output, dim=1).item()
-            predicted_species = classes[predicted_index]
-            ret.append(predicted_species)
-            vprint(f'species predicted: {predicted_species}')
-        return ret
+# =====================================================
+# BIRD DETECTION (YOLO11n via cv2.dnn)
+# =====================================================
+
+def letterbox(img, size):
+    """Resize keeping aspect ratio and pad to a square. Returns padded image + mapping info."""
+    w, h = img.size
+    scale = min(size / w, size / h)
+    new_w, new_h = round(w * scale), round(h * scale)
+    resized = img.resize((new_w, new_h), Image.BILINEAR)
+    canvas = Image.new("RGB", (size, size), (114, 114, 114))
+    pad_x, pad_y = (size - new_w) // 2, (size - new_h) // 2
+    canvas.paste(resized, (pad_x, pad_y))
+    return canvas, scale, pad_x, pad_y
+
+
+def nms(boxes, scores, iou_thresh):
+    """Plain numpy non-max suppression. boxes are [x1, y1, x2, y2]."""
+    order = scores.argsort()[::-1]
+    keep = []
+    while order.size > 0:
+        i = order[0]
+        keep.append(i)
+        if order.size == 1:
+            break
+        rest = order[1:]
+        xx1 = np.maximum(boxes[i, 0], boxes[rest, 0])
+        yy1 = np.maximum(boxes[i, 1], boxes[rest, 1])
+        xx2 = np.minimum(boxes[i, 2], boxes[rest, 2])
+        yy2 = np.minimum(boxes[i, 3], boxes[rest, 3])
+        inter = np.maximum(0, xx2 - xx1) * np.maximum(0, yy2 - yy1)
+        area_i = (boxes[i, 2] - boxes[i, 0]) * (boxes[i, 3] - boxes[i, 1])
+        area_r = (boxes[rest, 2] - boxes[rest, 0]) * (boxes[rest, 3] - boxes[rest, 1])
+        iou = inter / (area_i + area_r - inter + 1e-9)
+        order = rest[iou < iou_thresh]
+    return keep
+
+
+def detect_birds(detector, image):
+    """Return a list of [x1, y1, x2, y2] boxes (in original image pixels) for each bird."""
+    canvas, scale, pad_x, pad_y = letterbox(image, DETECT_SIZE)
+    arr = np.asarray(canvas, dtype=np.float32) / 255.0
+    arr = np.ascontiguousarray(np.transpose(arr, (2, 0, 1))[None, ...])  # (1, 3, H, W)
+
+    detector.setInput(arr)
+    out = detector.forward()[0]          # (84, N) for YOLO11
+    if out.shape[0] < out.shape[1]:
+        out = out.T                      # -> (N, 84)
+
+    scores = out[:, 4 + BIRD_CLASS_ID]
+    mask = scores > DETECT_CONF
+    if not mask.any():
+        return []
+
+    out, scores = out[mask], scores[mask]
+    cx, cy, w, h = out[:, 0], out[:, 1], out[:, 2], out[:, 3]
+    boxes = np.stack([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2], axis=1)
+
+    # Undo letterboxing -> original image coordinates
+    boxes[:, [0, 2]] = (boxes[:, [0, 2]] - pad_x) / scale
+    boxes[:, [1, 3]] = (boxes[:, [1, 3]] - pad_y) / scale
+    img_w, img_h = image.size
+    boxes[:, [0, 2]] = boxes[:, [0, 2]].clip(0, img_w)
+    boxes[:, [1, 3]] = boxes[:, [1, 3]].clip(0, img_h)
+
+    keep = nms(boxes, scores, NMS_IOU)
+    return [boxes[i].tolist() for i in keep]
+
+
+# =====================================================
+# SPECIES CLASSIFICATION (your bird_model.onnx via cv2.dnn)
+# =====================================================
+
+def preprocess_for_classifier(crop):
+    """Same as Resize(256) -> CenterCrop(224) -> ToTensor -> Normalize, using only PIL + numpy."""
+    crop = crop.convert("RGB")
+    w, h = crop.size
+    if w < h:
+        new_w, new_h = 256, max(224, round(h * 256 / w))
+    else:
+        new_w, new_h = max(224, round(w * 256 / h)), 256
+    crop = crop.resize((new_w, new_h), Image.BILINEAR)
+
+    left, top = (new_w - 224) // 2, (new_h - 224) // 2
+    crop = crop.crop((left, top, left + 224, top + 224))
+
+    arr = np.asarray(crop, dtype=np.float32) / 255.0
+    arr = (arr - IMAGENET_MEAN) / IMAGENET_STD
+    arr = np.transpose(arr, (2, 0, 1))[None, ...]  # (1, 3, 224, 224)
+    return np.ascontiguousarray(arr, dtype=np.float32)
+
+
+def predict(classifier, image, boxes):
+    """Classify each cropped bird. Returns a list of species names."""
+    species = []
+    for box in boxes:
+        x1, y1, x2, y2 = (int(v) for v in box)
+        if x2 - x1 < 2 or y2 - y1 < 2:
+            species.append("Unknown")
+            continue
+        crop = image.crop((x1, y1, x2, y2))
+        tensor = preprocess_for_classifier(crop)
+        classifier.setInput(tensor)
+        output = classifier.forward()
+        idx = int(np.argmax(output, axis=1)[0])
+        name = CLASSES[idx] if idx < len(CLASSES) else f"class_{idx}"
+        species.append(name)
+        vprint(f"species predicted: {name}")
+    return species
+
+
+# =====================================================
+# DRAWING + UPLOAD
+# =====================================================
+
+def annotate(image, boxes, labels):
+    annotated = image.copy()
+    draw = ImageDraw.Draw(annotated)
+    for box, label in zip(boxes, labels):
+        draw.rectangle(box, outline="red", width=3)
+        draw.text((box[0] + 4, box[1] + 4), label, fill=(255, 255, 255),
+                  stroke_width=2, stroke_fill="red")
+    return annotated
+
+
+def send_to_server(image, labels):
+    buf = io.BytesIO()
+    image.save(buf, format="JPEG", quality=85)
+    buf.seek(0)
+
+    data = {
+        "bird_names": json.dumps(labels),
+        "timestamp": datetime.now().isoformat(),
+    }
+    files = {"image": ("bird.jpg", buf, "image/jpeg")}
+    try:
+        response = requests.post(WEBHOOK_URL, data=data, files=files, timeout=15)
+        print(response)
+    except requests.RequestException as e:
+        print(f"Failed to send to server: {e}")
+
+
+# =====================================================
+# MAIN
+# =====================================================
 
 def main():
     print("=====================================")
-    print('Starting Bird Device Application')
+    print("Starting Bird Device Application")
     print("=====================================")
-
-    # Input frame
-    # Ask, is there bird?
-    # if there are birds, find bird boxes and select tight frame
-    # Give tight bird image to id model
-    # Get bird name
-    # Send to server: bird name, image, time taken
-
-    # =================================
-    # Persisting Variables
-    # =================================
 
     cam = cv2.VideoCapture(0)
     if not cam.isOpened():
-        print('Failed to initialize camera')
+        print("Failed to initialize camera")
+        return
+    cam.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-    t = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
-        transforms.Normalize(
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225]
-        )
-    ])
-    model = torch.jit.load("bird_model.pt")
-    model.eval()
-    classes = ['American_Crow', 'American_Goldfinch', 'American_Robin', 'Baltimore_Oriole', 'Barn_Swallow', 'Black_Capped_Chickadee', 
-               'Blue_Grosbeak', 'Blue_Jay', 'Bobolink', 'Brewer_Blackbird', 'Brown_Creeper', 'Brown_Thrasher', 'Brownheaded_Cowbird', 
-               'Cardinal', 'Carolina_Wren', 'Cedar_Waxwing', 'Chipping_Sparrow', 'Common_Grackle', 'Common_Raven', 'Common_Yellowthroat', 
-               'Dark_eyed_Junco', 'Downy_Woodpecker', 'Eastern_Bluebird', 'Eastern_Towhee', 'European_Starling', 'Field_Sparrow', 
-               'Fox_Sparrow', 'Gray_Catbird', 'Hairy_Woodpecker', 'House_Finch', 'House_Sparrow', 'House_Wren', 'Indigo_Bunting', 
-               'Lincoln_Sparrow', 'Magnolia_Warbler', 'Mockingbird', 'Mourning_Dove', 'Northern_Flicker', 'Orchard_Oriole', 'Pileated_Woodpecker', 
-               'Pine_Warbler', 'Purple_Finch', 'Red_bellied_Woodpecker', 'Red_headed_Woodpecker', 'Red_winged_Blackbird', 
-               'Rose_breasted_Grosbeak', 'Ruby_throated_Hummingbird', 'Rusty_Blackbird', 'Savannah_Sparrow', 'Scarlet_Tanager', 
-               'Song_Sparrow', 'Spotted_Catbird', 'Tree_Sparrow', 'Tree_Swallow', 'Tufted_Titmouse', 'White_breasted_Nuthatch', 
-               'White_crowned_Sparrow', 'White_throated_Sparrow', 'Yellow_Warbler', 'Yellow_headed_Blackbird']
-    
-    webhook_url = 'https://webhook.site/a32c1a03-0dd5-4ef2-a876-baae164519dd'
+    # Load models ONCE
+    print("Loading models...")
+    try:
+        detector = load_net(DETECTOR_PATH)
+        classifier = load_net(CLASSIFIER_PATH)
+    except cv2.error as e:
+        print(f"OpenCV could not load a model: {e}")
+        cam.release()
+        return
 
-    response = requests.post(webhook_url, {'idk': 'test'})
+    # Sanity check: does the classifier's class count match CLASSES?
+    try:
+        classifier.setInput(np.zeros((1, 3, 224, 224), dtype=np.float32))
+        n_out = classifier.forward().shape[-1]
+        if n_out != len(CLASSES):
+            print(f"WARNING: model outputs {n_out} classes but CLASSES has {len(CLASSES)}. "
+                  f"Predicted names will be wrong!")
+    except cv2.error as e:
+        print(f"Classifier test run failed: {e}")
+        cam.release()
+        return
 
     num_birds = 0
+    print("Running. Press Ctrl+C to stop.")
 
-    # =================================
-    # Program Loop
-    # =================================
+    try:
+        while True:
+            image = capture_image(cam)
+            if image is None:
+                break
 
-    while(True):
-        # Capture image as 'image.jpg'
-        ret = capture_image(cam)
-        if not ret:
-            break
+            boxes = detect_birds(detector, image)
+            new_num_birds = len(boxes)
+            vprint(f"Num of Birds: {new_num_birds}")
 
-        # get list of birds in image in the form of tensors
-        bird_tensors, boxes = get_birds("rpi/image.jpg", transform=t)
-        new_num_birds = len(bird_tensors)
-        if new_num_birds > num_birds:
-            # ====== get the whole image, as well as detected birds, wrap it in object, send to endpoint ======
-            # Make prediction on each bird tensor
-            predictions = predict(model=model, tensors=bird_tensors, classes=classes)
+            # Only report when more birds appear than were there before
+            if new_num_birds > num_birds:
+                species = predict(classifier, image, boxes)
+                annotated = annotate(image, boxes, species)
+                send_to_server(annotated, species)
 
-            post_img = Image.open('rpi/image.jpg')
-            draw = ImageDraw.Draw(post_img)
-            for i in range(len(boxes)):
-                x_min = boxes[i][0]
-                y_min = boxes[i][1]
-                x_max = boxes[i][2]
-                y_max = boxes[i][3]
-                draw.line([x_min, y_min, x_min, y_max], fill='red', width=3) # left
-                draw.line([x_min, y_max, x_max, y_max], fill='red', width=3) # top 
-                draw.line([x_max, y_max, x_max, y_min], fill='red', width=3) # right
-                draw.line([x_min, y_min, x_max, y_min], fill='red', width=3) # bottom
-                draw.text((x_min, y_min), predictions[i], fill=(255,255,255), stroke_width=2, stroke_fill='red')
-
-            post_img.show(post_img)
-
-            # TODO: Maybe pass the boxes lists to here
-            # And then use some pillow stuff to draw the boxes and labels here
-
-            payload = {
-                'bird_names': predictions,
-                'image_array': np.asarray(post_img)
-            }
-
-            response = requests.post(webhook_url, payload)
-
-            print(response)
-            
-
-        time.sleep(0.1)
-
-        if keyboard.is_pressed('esc'):
-            print('Exiting Program Loop')
-            break
-
-    cam.release()
-    print('Program Stopped')
+            num_birds = new_num_birds
+            time.sleep(LOOP_DELAY)
+    except KeyboardInterrupt:
+        print("Exiting Program Loop")
+    finally:
+        cam.release()
+        print("Program Stopped")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
