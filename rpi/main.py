@@ -120,21 +120,21 @@ def main():
     # Program Loop
     # =================================
 
-    for i in range(1):
+    while(True):
         # Capture image as 'image.jpg'
         ret = capture_image(cam)
         if not ret:
             break
 
         # get list of birds in image in the form of tensors
-        bird_tensors, boxes = get_birds("rpi/birds.jpg", transform=t)
+        bird_tensors, boxes = get_birds("rpi/image.jpg", transform=t)
         new_num_birds = len(bird_tensors)
         if new_num_birds > num_birds:
             # ====== get the whole image, as well as detected birds, wrap it in object, send to endpoint ======
             # Make prediction on each bird tensor
             predictions = predict(model=model, tensors=bird_tensors, classes=classes)
 
-            post_img = Image.open('rpi/birds.jpg')
+            post_img = Image.open('rpi/image.jpg')
             draw = ImageDraw.Draw(post_img)
             for i in range(len(boxes)):
                 x_min = boxes[i][0]
