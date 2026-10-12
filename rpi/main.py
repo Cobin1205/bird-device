@@ -1,6 +1,7 @@
 import io
 import json
 import time
+import subprocess
 from datetime import datetime
 
 import cv2
@@ -65,15 +66,26 @@ def load_net(path):
 # CAMERA
 # =====================================================
 
-def capture_image(cam):
-    """Grab a frame and return it as an RGB PIL image (or None on failure)."""
-    ret, frame = cam.read()
-    if not ret or frame is None:
-        print("Failed to capture image")
+def capture_image():
+    """Take a photo with the Pi camera and return it as an RGB PIL image (or None on failure)."""
+    try:
+        result = subprocess.run(
+            ["rpicam-still", "-n", "-t", "500",
+             "--width", "640", "--height", "480",
+             "-e", "jpg", "-o", "-"],       # "-o -" writes the JPEG to stdout
+            capture_output=True,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        print(f"Failed to capture image: {e}")
         return None
-    # OpenCV gives BGR; PIL expects RGB
-    return Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
 
+    if result.returncode != 0 or not result.stdout:
+        print("Failed to capture image:", result.stderr.decode(errors="ignore")[-300:])
+        return None
+
+    vprint('successfully captured image')
+    return Image.open(io.BytesIO(result.stdout)).convert("RGB")
 
 # =====================================================
 # BIRD DETECTION (YOLO11n via cv2.dnn)
@@ -88,6 +100,7 @@ def letterbox(img, size):
     canvas = Image.new("RGB", (size, size), (114, 114, 114))
     pad_x, pad_y = (size - new_w) // 2, (size - new_h) // 2
     canvas.paste(resized, (pad_x, pad_y))
+    vprint('resized image')
     return canvas, scale, pad_x, pad_y
 
 
@@ -141,6 +154,7 @@ def detect_birds(detector, image):
     boxes[:, [1, 3]] = boxes[:, [1, 3]].clip(0, img_h)
 
     keep = nms(boxes, scores, NMS_IOU)
+    vprint('detected birds and obtained boxes')
     return [boxes[i].tolist() for i in keep]
 
 
@@ -164,6 +178,7 @@ def preprocess_for_classifier(crop):
     arr = np.asarray(crop, dtype=np.float32) / 255.0
     arr = (arr - IMAGENET_MEAN) / IMAGENET_STD
     arr = np.transpose(arr, (2, 0, 1))[None, ...]  # (1, 3, 224, 224)
+    vprint('preprocessed')
     return np.ascontiguousarray(arr, dtype=np.float32)
 
 
@@ -183,6 +198,8 @@ def predict(classifier, image, boxes):
         name = CLASSES[idx] if idx < len(CLASSES) else f"class_{idx}"
         species.append(name)
         vprint(f"species predicted: {name}")
+    if len(species) == 0:
+        vprint('no birds found')
     return species
 
 
@@ -197,6 +214,7 @@ def annotate(image, boxes, labels):
         draw.rectangle(box, outline="red", width=3)
         draw.text((box[0] + 4, box[1] + 4), label, fill=(255, 255, 255),
                   stroke_width=2, stroke_fill="red")
+    vprint('boxes drawn on image')
     return annotated
 
 
@@ -226,13 +244,6 @@ def main():
     print("Starting Bird Device Application")
     print("=====================================")
 
-    cam = cv2.VideoCapture(0)
-    if not cam.isOpened():
-        print("Failed to initialize camera")
-        return
-    cam.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-
     # Load models ONCE
     print("Loading models...")
     try:
@@ -240,7 +251,6 @@ def main():
         classifier = load_net(CLASSIFIER_PATH)
     except cv2.error as e:
         print(f"OpenCV could not load a model: {e}")
-        cam.release()
         return
 
     # Sanity check: does the classifier's class count match CLASSES?
@@ -252,7 +262,6 @@ def main():
                   f"Predicted names will be wrong!")
     except cv2.error as e:
         print(f"Classifier test run failed: {e}")
-        cam.release()
         return
 
     num_birds = 0
@@ -260,7 +269,7 @@ def main():
 
     try:
         while True:
-            image = capture_image(cam)
+            image = capture_image()
             if image is None:
                 break
 
@@ -279,7 +288,6 @@ def main():
     except KeyboardInterrupt:
         print("Exiting Program Loop")
     finally:
-        cam.release()
         print("Program Stopped")
 
 
