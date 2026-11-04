@@ -3,9 +3,18 @@ import copy
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import logging
 
 from torchvision import transforms, datasets, models
 from torch.utils.data import DataLoader, random_split
+from datetime import datetime
+
+# ----------------------------
+# 1. LOGGING
+# ----------------------------
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(filename='model.log', level=logging.INFO, format='%(message)s')
 
 # ----------------------------
 # 1. DEVICE
@@ -157,6 +166,8 @@ patience_counter = 0
 epochs = 60
 
 print("\nBeginning Training...\n")
+logger.info("\n\nBeginning Training...")
+logger.info(f'{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}\n')
 
 for epoch in range(start_epoch, epochs):
 
@@ -249,7 +260,7 @@ for epoch in range(start_epoch, epochs):
     scheduler.step(val_loss)
 
     # ----------------------------
-    # PRINT METRICS
+    # LOG METRICS
     # ----------------------------
     print(f"Epoch {epoch+1}/{epochs}")
 
@@ -261,12 +272,25 @@ for epoch in range(start_epoch, epochs):
 
     print("-" * 40)
 
+    logger.info(f"Epoch {epoch+1}/{epochs}")
+    
+    logger.info(f"Train Loss: {train_loss:.4f}")
+    logger.info(f"Train Accuracy: {train_acc:.2f}%")
+
+    logger.info(f"Validation Loss: {val_loss:.4f}")
+    logger.info(f"Validation Accuracy: {val_acc:.2f}%")
+
+    logger.info(f'')
+
+    logger.info("-" * 40)
+
     # ----------------------------
     # SAVE BEST MODEL
     # ----------------------------
     if val_loss < best_val_loss:
 
         print("Validation improved. Saving checkpoint...\n")
+        logger.info("Validation improved. Saving checkpoint...\n")
 
         best_val_loss = val_loss
         patience_counter = 0
@@ -286,6 +310,10 @@ for epoch in range(start_epoch, epochs):
             f"No significant improvement "
             f"({patience_counter}/{patience})"
         )
+        logger.info(
+            f"No significant improvement "
+            f"({patience_counter}/{patience})"
+        )
 
         if patience_counter >= patience:
 
@@ -296,13 +324,9 @@ for epoch in range(start_epoch, epochs):
 # 10. EXPORT FOR RASPBERRY PI
 # ----------------------------
 print("\nExporting TorchScript model...\n")
-
 model.eval()
-
 example = torch.randn(1, 3, 224, 224).to(device)
-
 traced_model = torch.jit.trace(model, example)
-
-traced_model.save("bird_model.pt")
-
+torch.jit.save(traced_model, "bird_model.pt", _extra_files={"classes.txt": str(full_dataset.classes)})
 print("Saved model as bird_model.pt")
+logger.info("Saved model as bird_model.pt")

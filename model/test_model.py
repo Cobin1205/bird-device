@@ -2,13 +2,24 @@ import torch
 from torchvision import transforms
 from PIL import Image
 import os
+from bird_classes import ClassObject
+import ast
 
 # ----------------------------
 # LOAD MODEL
 # ----------------------------
 
-model = torch.jit.load("bird_model.pt")
-model.eval() #switch from training mode to evaluation mode
+extra_files = {"classes.txt": ""}
+
+# Load the model while passing the extra_files dictionary
+model = torch.jit.load("bird_model.pt", _extra_files=extra_files)
+model.eval() # switch from training mode to evaluation mode
+
+# Retrieve and decode the classes list from the loaded bytes
+classes_str = extra_files["classes.txt"].decode("utf-8")
+classes = ast.literal_eval(classes_str)
+
+print(f"Loaded {len(classes)} classes from model checkpoint.")
 
 # ----------------------------
 # IMAGE PREPROCESSING
@@ -26,19 +37,15 @@ transform = transforms.Compose([
 # ----------------------------
 # CLASS NAMES
 # ----------------------------
-dataset_path = "model/CUB_200_2011/images"
-
-classes = sorted([
-    d for d in os.listdir(dataset_path)
-    if os.path.isdir(os.path.join(dataset_path, d))
-])
+classes = ClassObject.get_class_list()
 
 print(classes)
+print(len(classes))
 
 # ----------------------------
 # LOAD TEST IMAGE
 # ----------------------------
-image_path = "model/testBirds/starling.jpg"   # change this to your image
+image_path = "model/testBirds/testBlackbird.jpg"   # change this to your image
 image = Image.open(image_path).convert("RGB")
 image = transform(image)
 image = image.unsqueeze(0)

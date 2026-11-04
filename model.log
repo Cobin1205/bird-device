@@ -1,0 +1,91 @@
+Beginning Training...
+2026-11-04 11:05:09
+
+Epoch 39/60
+Train Loss: 1.0962
+Train Accuracy: 68.79%
+Validation Loss: 0.4015
+Validation Accuracy: 88.01%
+----------------------------------------
+Validation improved. Saving checkpoint...
+
+Epoch 40/60
+Train Loss: 0.9904
+Train Accuracy: 71.66%
+Validation Loss: 0.4213
+Validation Accuracy: 87.38%
+----------------------------------------
+No significant improvement (1/5)
+Epoch 41/60
+Train Loss: 1.0086
+Train Accuracy: 70.80%
+Validation Loss: 0.4500
+Validation Accuracy: 86.86%
+----------------------------------------
+No significant improvement (2/5)
+Epoch 42/60
+Train Loss: 0.9532
+Train Accuracy: 72.67%
+Validation Loss: 0.4710
+Validation Accuracy: 85.92%
+----------------------------------------
+No significant improvement (3/5)
+Epoch 43/60
+Train Loss: 0.9051
+Train Accuracy: 74.21%
+Validation Loss: 0.4323
+Validation Accuracy: 86.86%
+----------------------------------------
+No significant improvement (4/5)
+Epoch 44/60
+Train Loss: 0.8832
+Train Accuracy: 74.68%
+Validation Loss: 0.4489
+Validation Accuracy: 87.49%
+----------------------------------------
+No significant improvement (5/5)
+
+
+Beginning Training...
+2026-11-04 11:40:52
+
+Epoch 40/60
+Train Loss: 1.0405
+Train Accuracy: 71.60%
+Validation Loss: 0.4483
+Validation Accuracy: 86.55%
+
+----------------------------------------
+No significant improvement (1/5)
+Epoch 41/60
+Train Loss: 0.9522
+Train Accuracy: 72.31%
+Validation Loss: 0.5048
+Validation Accuracy: 84.78%
+
+----------------------------------------
+No significant improvement (2/5)
+Epoch 42/60
+Train Loss: 0.9388
+Train Accuracy: 72.18%
+Validation Loss: 0.4390
+Validation Accuracy: 86.76%
+
+----------------------------------------
+No significant improvement (3/5)
+Epoch 43/60
+Train Loss: 0.9574
+Train Accuracy: 72.59%
+Validation Loss: 0.5175
+Validation Accuracy: 84.57%
+
+----------------------------------------
+No significant improvement (4/5)
+Epoch 44/60
+Train Loss: 0.9718
+Train Accuracy: 72.31%
+Validation Loss: 0.5043
+Validation Accuracy: 84.67%
+
+----------------------------------------
+No significant improvement (5/5)

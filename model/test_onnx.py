@@ -2,16 +2,29 @@ import onnxruntime as ort
 from torchvision import transforms
 from PIL import Image
 import numpy as np
-import os
+import onnx
+import json
 
 # ----------------------------
-# LOAD MODEL
+# LOAD MODEL & EXTRACT CLASSES
 # ----------------------------
+
+onnx_path = "bird_model.onnx"
 
 session = ort.InferenceSession(
-    "bird_model.onnx",
+    onnx_path,
     providers=["CPUExecutionProvider"]
 )
+
+# Extract class names directly from the ONNX model metadata
+onnx_model = onnx.load(onnx_path)
+metadata = {meta.key: meta.value for meta in onnx_model.metadata_props}
+
+if "class_names" in metadata:
+    classes = json.loads(metadata["class_names"])
+    print(f"Successfully loaded {len(classes)} classes from ONNX model metadata.")
+else:
+    raise ValueError("Class names metadata not found in the ONNX model! Ensure you exported it using the updated pt_to_onnx.py script.")
 
 # Get model input/output names
 input_name = session.get_inputs()[0].name
@@ -19,7 +32,6 @@ output_name = session.get_outputs()[0].name
 
 print("Model input:", input_name)
 print("Model output:", output_name)
-
 
 # ----------------------------
 # IMAGE PREPROCESSING
@@ -36,21 +48,10 @@ transform = transforms.Compose([
 ])
 
 # ----------------------------
-# CLASS NAMES
-# ----------------------------
-
-dataset_path = "model/CUB_200_2011/images"
-
-classes = sorted([
-    d for d in os.listdir(dataset_path)
-    if os.path.isdir(os.path.join(dataset_path, d))
-])
-
-# ----------------------------
 # LOAD TEST IMAGE
 # ----------------------------
 
-image_path = "model/testBirds/starling.jpg"
+image_path = "model/testBirds/testBlackbird.jpg"
 
 image = Image.open(image_path).convert("RGB")
 

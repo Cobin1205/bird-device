@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 import requests
 from PIL import Image, ImageDraw
+import onnx
 
 # =====================================================
 # CONFIG
@@ -26,21 +27,13 @@ LOOP_DELAY = 0.5          # seconds between frames
 
 WEBHOOK_URL = "https://webhook.site/a32c1a03-0dd5-4ef2-a876-baae164519dd"
 
-CLASSES = [
-    'American_Crow', 'American_Goldfinch', 'American_Robin', 'Baltimore_Oriole', 'Barn_Swallow',
-    'Black_Capped_Chickadee', 'Blue_Grosbeak', 'Blue_Jay', 'Bobolink', 'Brewer_Blackbird',
-    'Brown_Creeper', 'Brown_Thrasher', 'Brownheaded_Cowbird', 'Cardinal', 'Carolina_Wren',
-    'Cedar_Waxwing', 'Chipping_Sparrow', 'Common_Grackle', 'Common_Raven', 'Common_Yellowthroat',
-    'Dark_eyed_Junco', 'Downy_Woodpecker', 'Eastern_Bluebird', 'Eastern_Towhee', 'European_Starling',
-    'Field_Sparrow', 'Fox_Sparrow', 'Gray_Catbird', 'Hairy_Woodpecker', 'House_Finch',
-    'House_Sparrow', 'House_Wren', 'Indigo_Bunting', 'Lincoln_Sparrow', 'Magnolia_Warbler',
-    'Mockingbird', 'Mourning_Dove', 'Northern_Flicker', 'Orchard_Oriole', 'Pileated_Woodpecker',
-    'Pine_Warbler', 'Purple_Finch', 'Red_bellied_Woodpecker', 'Red_headed_Woodpecker',
-    'Red_winged_Blackbird', 'Rose_breasted_Grosbeak', 'Ruby_throated_Hummingbird', 'Rusty_Blackbird',
-    'Savannah_Sparrow', 'Scarlet_Tanager', 'Song_Sparrow', 'Spotted_Catbird', 'Tree_Sparrow',
-    'Tree_Swallow', 'Tufted_Titmouse', 'White_breasted_Nuthatch', 'White_crowned_Sparrow',
-    'White_throated_Sparrow', 'Yellow_Warbler', 'Yellow_headed_Blackbird',
-]
+# Load class list dynamically from the ONNX model file
+try:
+    _onnx_model = onnx.load(CLASSIFIER_PATH)
+    CLASSES = json.loads(_onnx_model.doc_string)
+except Exception as e:
+    print(f"Failed to load classes from ONNX model: {e}")
+    CLASSES = []
 
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
@@ -243,6 +236,8 @@ def main():
     print("=====================================")
     print("Starting Bird Device Application")
     print("=====================================")
+
+    vprint(f'num of classes: {len(CLASSES)}')
 
     # Load models ONCE
     print("Loading models...")
