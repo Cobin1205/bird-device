@@ -4,40 +4,71 @@ import torch.nn as nn
 from torchvision import models
 import json
 import os
-from bird_classes import ClassObject  # Import your single-source class list
+import sys
+import ast
 
 # ----------------------------
 # 1. SETTINGS
 # ----------------------------
 
 checkpoint_path = "bird_checkpoint.pth"
+traced_model_path = "bird_model.pt"
 onnx_path = "bird_model.onnx"
-
-# Pull the exact classes list from your single source of truth
-classes = ClassObject.get_class_list()
-num_classes = len(classes)
-print(f"Loaded {num_classes} classes from ClassObject.")
 
 device = torch.device("cpu")
 print("Using device:", device)
 
 # ----------------------------
-# 2. CREATE MODEL
+# 2. LOAD CLASSES FROM TRACED MODEL (.pt) EXTRA FILES
 # ----------------------------
+
+classes = []
+if os.path.exists(traced_model_path):
+    print(f"Extracting classes from {traced_model_path} extra files...")
+    try:
+        extra_files = {"classes.txt": ""}
+        # Load the TorchScript model to retrieve extra files
+        torch.jit.load(traced_model_path, map_location=device, _extra_files=extra_files)
+        
+        classes_raw = extra_files["classes.txt"]
+        if isinstance(classes_raw, bytes):
+            classes_raw = classes_raw.decode("utf-8")
+            
+        classes = ast.literal_eval(classes_raw)
+        print(f"Successfully loaded {len(classes)} classes from bird_model.pt extra files.")
+    except Exception as e:
+        print(f"Failed to parse classes.txt from extra files: {e}")
+
+if not classes:
+    print("FAILED: Could not load class list from bird_model.pt! Ensure build_model.py has run successfully.")
+    sys.exit(1)
+
+num_classes = len(classes)
+
+# ----------------------------
+# 3. LOAD CHECKPOINT & CREATE MODEL
+# ----------------------------
+
+if not os.path.exists(checkpoint_path):
+    print(f"FAILED: Checkpoint file not found at {checkpoint_path}")
+    sys.exit(1)
+
+print("Loading checkpoint weights...")
+checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+
+# Verify shape matches
+expected_num_classes = checkpoint["model_state"]["classifier.1.weight"].shape[0]
+if expected_num_classes != num_classes:
+    print(f"WARNING: Checkpoint expects {expected_num_classes} classes, but .pt extra files gave {num_classes}!")
 
 print("Creating MobileNetV2...")
 model = models.mobilenet_v2(weights=None)
 model.classifier[1] = nn.Linear(model.classifier[1].in_features, num_classes)
 model = model.to(device)
 
-# ----------------------------
-# 3. LOAD CHECKPOINT
-# ----------------------------
-
-print("Loading checkpoint...")
-checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+print("Loading model state dict...")
 model.load_state_dict(checkpoint["model_state"])
-print(f"Loaded model from epoch {checkpoint['epoch'] + 1}")
+print(f"Successfully loaded model from epoch {checkpoint['epoch'] + 1}")
 
 # ----------------------------
 # 4. PREPARE FOR EXPORT

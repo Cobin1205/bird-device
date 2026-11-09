@@ -6,9 +6,9 @@ from PIL import Image
 bad = []
 
 model = YOLO('yolov8s.pt')
-root = Path('model/CUB_200_2011/images')
+root = Path('model/data')
 
-dest = Path('model/CUB_200_2011/cropped_images')
+dest = Path('model/data_cropped')
 
 for dir in root.iterdir():
     for img_path in dir.iterdir():

@@ -58,8 +58,14 @@ val_transform = transforms.Compose([
 # ----------------------------
 # 3. DATASET
 # ----------------------------
+'''
 full_dataset = datasets.ImageFolder(
     root="model/CUB_200_2011/cropped_images",
+    transform=train_transform
+)
+'''
+full_dataset = datasets.ImageFolder(
+    root="model/data_cropped",
     transform=train_transform
 )
 
@@ -163,7 +169,7 @@ patience_counter = 0
 # ----------------------------
 # 9. TRAINING LOOP
 # ----------------------------
-epochs = 60
+epochs = 100
 
 print("\nBeginning Training...\n")
 logger.info("\n\nBeginning Training...")

@@ -1,5 +1,7 @@
 .venv
 .env
 CUB_200_2011
-*.jpg
 .vscode
+nabirds
+data
+data_cropped
